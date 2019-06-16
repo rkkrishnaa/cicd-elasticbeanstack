@@ -1,0 +1,404 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: 'This template creates production envrinoment with application and database stack'
+
+Parameters:
+  Name:
+    Type: String
+  VpcId:
+    Type: String
+  VpcCIDR:
+    Type: String
+  PrivateSubnets:
+    Type: CommaDelimitedList
+  PublicSubnets:
+    Type: CommaDelimitedList
+  PrivateSubnetsStr:
+    Type: String
+  PublicSubnetsStr:
+    Type: String
+  BeanstackApplication:
+    Type: String
+  DBInstanceClass:
+    Type: String
+  DBName:
+    Type: String
+  DBMasterUsername:
+    Type: String
+  DBMasterUserPassword:
+    Type: String
+  DBPort:
+    Type: String
+  KeyName:
+    Type: String
+  BeanstackInstanceType:
+    Type: String
+  SolutionStackName:
+    Type: String
+  RepositoryName:
+    Type: String
+  RepositoryBranch:
+    Type: String
+  SNSTopicArn:
+    Type: String
+
+Resources:
+  RDSInstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for rds instance
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub ${Name} (RDS SecurityGroup Prod)
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: !Ref DBPort
+        ToPort: !Ref DBPort
+        Description: Aurora Service
+        CidrIp: !Ref VpcCIDR
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        CidrIp: 0.0.0.0/0
+        FromPort: 0
+        ToPort: 65535
+        Description: Open to an external network
+
+  RDSSubnetGroup:
+    Type: "AWS::RDS::DBSubnetGroup"
+    Properties:
+      DBSubnetGroupDescription: 'Subnet Group for RDS instance'
+      DBSubnetGroupName: !Join [ "-", [ !Ref Name, 'subnetgroup-prod' ] ]
+      SubnetIds: !Ref PrivateSubnets
+
+  AuroraCluster:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      Engine: aurora
+      MasterUsername: !Ref DBMasterUsername
+      MasterUserPassword: !Ref DBMasterUserPassword
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      DatabaseName: !Ref DBName
+      DBClusterParameterGroupName: default.aurora5.6
+      Port: !Ref DBPort
+      VpcSecurityGroupIds:
+        - !Ref RDSInstanceSecurityGroup
+    DependsOn: RDSSubnetGroup
+
+  AuroraInstance0:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: aurora
+      PubliclyAccessible: 'false'
+      DBClusterIdentifier: !Ref AuroraCluster
+      DBInstanceClass: !Ref DBInstanceClass
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      DBParameterGroupName: default.aurora5.6
+    DependsOn: AuroraCluster
+
+  BeanstalkSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for elasticbeanstack instance
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub ${Name} (Beanstack SG Prod)
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 0
+        ToPort: 65535
+        Description: Open to vpc
+        CidrIp: !Ref VpcCIDR
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        CidrIp: 0.0.0.0/0
+        FromPort: 0
+        ToPort: 65535
+        Description: Open to an external network
+
+  LBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for load balancer
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub ${Name} (LB SG Prod)
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        Description: HTTP service port opened to vpc
+        CidrIp: !Ref VpcCIDR
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        CidrIp: 0.0.0.0/0
+        FromPort: 80
+        ToPort: 80
+        Description: HTTP service port opened to an external network
+
+  ConfigurationTemplate:
+    Type: AWS::ElasticBeanstalk::ConfigurationTemplate
+    Properties:
+      ApplicationName: !Ref BeanstackApplication
+      Description: Configuration template for php application
+      OptionSettings:
+      - Namespace: aws:ec2:vpc
+        OptionName: VPCId
+        Value: !Ref VpcId
+      - Namespace: aws:ec2:vpc
+        OptionName: Subnets
+        Value: !Ref PrivateSubnetsStr
+      - Namespace: aws:ec2:vpc
+        OptionName: ELBSubnets
+        Value: !Ref PublicSubnetsStr
+      - Namespace: aws:autoscaling:launchconfiguration
+        OptionName: EC2KeyName
+        Value: !Ref KeyName
+      - Namespace: aws:autoscaling:launchconfiguration
+        OptionName: SecurityGroups
+        Value: !Ref BeanstalkSecurityGroup
+      - Namespace: aws:autoscaling:launchconfiguration
+        OptionName: InstanceType
+        Value: !Ref BeanstackInstanceType
+      - Namespace: aws:autoscaling:launchconfiguration
+        OptionName: RootVolumeSize
+        Value: '20'
+      - Namespace: aws:autoscaling:asg
+        OptionName: MinSize
+        Value: '1'
+      - Namespace: aws:autoscaling:asg
+        OptionName: MaxSize
+        Value: '2'
+      - Namespace: aws:elasticbeanstalk:environment
+        OptionName: EnvironmentType
+        Value: 'LoadBalanced'
+      - Namespace: aws:elasticbeanstalk:environment
+        OptionName: LoadBalancerType
+        Value: 'classic'
+      - Namespace: aws:elb:loadbalancer
+        OptionName: ManagedSecurityGroup
+        Value: !Ref LBSecurityGroup
+      - Namespace: aws:elb:loadbalancer
+        OptionName: SecurityGroups
+        Value: !Ref LBSecurityGroup
+      - Namespace: aws:elasticbeanstalk:environment:process:default
+        OptionName: DeregistrationDelay
+        Value: '60'
+      - Namespace: aws:elasticbeanstalk:environment:process:default
+        OptionName: HealthCheckInterval
+        Value: '20'
+      - Namespace: aws:elasticbeanstalk:environment:process:default
+        OptionName: HealthCheckPath
+        Value: '/'
+      - Namespace: aws:elasticbeanstalk:environment:process:default
+        OptionName: HealthCheckTimeout
+        Value: '5'
+      - Namespace: aws:elasticbeanstalk:environment:process:default
+        OptionName: HealthyThresholdCount
+        Value: '2'
+      - Namespace: aws:elasticbeanstalk:environment:process:default
+        OptionName: UnhealthyThresholdCount
+        Value: '3'
+      - Namespace: aws:elasticbeanstalk:environment:process:default
+        OptionName: MatcherHTTPCode
+        Value: '200'
+      - Namespace: aws:elasticbeanstalk:environment:process:default
+        OptionName: Port
+        Value: '80'
+      - Namespace: aws:elasticbeanstalk:environment:process:default
+        OptionName: Protocol
+        Value: HTTP
+      - Namespace: aws:elasticbeanstalk:environment:process:default
+        OptionName: StickinessEnabled
+        Value: 'true'
+      - Namespace: aws:elasticbeanstalk:environment:process:default
+        OptionName: StickinessLBCookieDuration
+        Value: '300'
+      - Namespace: aws:elasticbeanstalk:environment:process:default
+        OptionName: StickinessType
+        Value: 'lb_cookie'
+      - Namespace: aws:elbv2:listener:default
+        OptionName: ListenerEnabled
+        Value: 'true'
+      - Namespace: aws:elasticbeanstalk:application:environment
+        OptionName: RDS_DB_NAME
+        Value: !Ref DBName
+      - Namespace: aws:elasticbeanstalk:application:environment
+        OptionName: RDS_HOSTNAME
+        Value: !GetAtt AuroraCluster.Endpoint.Address
+      - Namespace: aws:elasticbeanstalk:application:environment
+        OptionName: RDS_PORT
+        Value: !Ref DBPort
+      - Namespace: aws:elasticbeanstalk:application:environment
+        OptionName: RDS_USERNAME
+        Value: !Ref DBMasterUsername
+      - Namespace: aws:elasticbeanstalk:application:environment
+        OptionName: RDS_PASSWORD
+        Value: !Ref DBMasterUserPassword
+      SolutionStackName: !Ref SolutionStackName
+
+  Environment:
+    Type: AWS::ElasticBeanstalk::Environment
+    Properties:
+      Description: Prod Environment
+      ApplicationName: !Ref BeanstackApplication
+      TemplateName: !Ref ConfigurationTemplate
+      EnvironmentName: !Join [ "-", [ !Ref BeanstackApplication, prod-environment ] ]
+      Tags:
+        - Key: Name
+          Value: !Sub ${Name} (Prod)
+
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - codepipeline.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: codepipeline-service
+        PolicyDocument:
+          Statement:
+          - Action:
+            - codecommit:GetBranch
+            - codecommit:GetCommit
+            - codecommit:UploadArchive
+            - codecommit:GetUploadArchiveStatus
+            - codecommit:CancelUploadArchive
+            Resource: "*"
+            Effect: Allow
+          - Action:
+            - s3:GetObject
+            - s3:GetObjectVersion
+            - s3:GetBucketVersioning
+            Resource: "*"
+            Effect: Allow
+          - Action:
+            - s3:PutObject
+            Resource:
+            - arn:aws:s3:::codepipeline*
+            - arn:aws:s3:::elasticbeanstalk*
+            Effect: Allow
+          - Action:
+            - codedeploy:CreateDeployment
+            - codedeploy:GetApplicationRevision
+            - codedeploy:GetDeployment
+            - codedeploy:GetDeploymentConfig
+            - codedeploy:RegisterApplicationRevision
+            Resource: "*"
+            Effect: Allow
+          - Action:
+            - elasticbeanstalk:*
+            - ec2:*
+            - elasticloadbalancing:*
+            - autoscaling:*
+            - cloudwatch:*
+            - s3:*
+            - sns:*
+            - cloudformation:*
+            - rds:*
+            - sqs:*
+            - ecs:*
+            - iam:PassRole
+            Resource: "*"
+            Effect: Allow
+          - Action:
+            - lambda:InvokeFunction
+            - lambda:ListFunctions
+            Resource: "*"
+            Effect: Allow
+          Version: '2012-10-17'
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+
+  CodePipelineStack:
+    Type: AWS::CodePipeline::Pipeline
+    DependsOn:
+    - Environment
+    Properties:
+      RoleArn:
+        Fn::Join:
+        - ''
+        - - 'arn:aws:iam::'
+          - Ref: AWS::AccountId
+          - ":role/"
+          - Ref: CodePipelineRole
+      Stages:
+      - Name: Source
+        Actions:
+        - InputArtifacts: []
+          Name: Source
+          ActionTypeId:
+            Category: Source
+            Owner: AWS
+            Version: '1'
+            Provider: CodeCommit
+          OutputArtifacts:
+          - Name: MyApp
+          Configuration:
+            BranchName:
+              Ref: RepositoryBranch
+            RepositoryName:
+              Ref: RepositoryName
+          RunOrder: 1
+
+      - Name: Approval
+        Actions:
+        - InputArtifacts: []
+          Name: Approval
+          ActionTypeId:
+            Category: Approval
+            Owner: AWS
+            Version: '1'
+            Provider: Manual
+          OutputArtifacts: []
+          Configuration:
+            NotificationArn: !Ref SNSTopicArn
+            CustomData: Approval or Reject this change.
+          RunOrder: 1
+
+      - Name: Deploy
+        Actions:
+        - InputArtifacts:
+          - Name: MyApp
+          Name: EbApp
+          ActionTypeId:
+            Category: Deploy
+            Owner: AWS
+            Version: '1'
+            Provider: ElasticBeanstalk
+          OutputArtifacts: []
+          Configuration:
+            ApplicationName: !Ref BeanstackApplication
+            EnvironmentName: !Ref Environment
+          RunOrder: 1
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+
+Outputs:
+  AuroraDbURL:
+    Description: Aurora Database URL
+    Value: !GetAtt AuroraCluster.Endpoint.Address
+  AuroraReadDbURL:
+    Description: Aurora Database Read URL
+    Value: !GetAtt AuroraCluster.ReadEndpoint.Address
+  CodePipelineURL:
+    Value:
+      Fn::Join:
+      - ''
+      - - https://console.aws.amazon.com/codepipeline/home?region=
+        - Ref: AWS::Region
+        - "#/view/"
+        - Ref: CodePipelineStack
+    Description: Pipeline URL

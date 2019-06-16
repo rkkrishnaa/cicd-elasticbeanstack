@@ -1,0 +1,21 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: 'This template creates an application elasticbeanstack'
+
+Parameters:
+  Name:
+    Type: String
+  BeanstackAppName:
+    Type: String
+
+Resources:
+  Application:
+    Type: AWS::ElasticBeanstalk::Application
+    Properties:
+      ApplicationName: !Join [ "-", [ !Ref Name, !Ref BeanstackAppName ] ]
+      Description: PHP application
+
+Outputs:
+  BeanstackApplication:
+    Value: !Ref Application

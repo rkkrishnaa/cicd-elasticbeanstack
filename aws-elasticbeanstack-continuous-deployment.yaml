@@ -1,0 +1,340 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  This template creates nested stack for building a continuous inregration and delivery pipeline
+  to deploy a php application hosted in elasticbeanstack environment with proper rollout and rollback mechanism.
+  This solution is developer friendly and it eases the process of deployment and release mamangement.
+
+Parameters:
+  VpcCIDR:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR for VPC
+
+  PublicSubnet1CIDR:
+    Type: String
+    Default: 10.0.1.0/24
+    Description: CIDR for public subnet1
+
+  PublicSubnet2CIDR:
+    Type: String
+    Default: 10.0.2.0/24
+    Description: CIDR for public subnet2
+
+  PrivateSubnet1CIDR:
+    Type: String
+    Default: 10.0.3.0/24
+    Description: CIDR for private subnet1
+
+  PrivateSubnet2CIDR:
+    Type: String
+    Default: 10.0.4.0/24
+    Description: CIDR for private subnet2
+
+  TemplateBucket:
+    Type: String
+    Default: aws-elasticbeanstack-continuous-deployment
+    Description: The S3 bucket from which to fetch the templates used by this stack.
+
+  BastionHostKeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the bastion host
+    Type: String
+    Default: key
+
+  BastionHostInstanceType:
+    Description: EC2 instance type for bastion host
+    Type: String
+    Default: t2.micro
+    AllowedValues: [t1.micro, t2.nano, t2.micro, t2.small, t2.medium, m3.medium]
+    ConstraintDescription: Enter a vaild EC2 instance type.
+
+  SSHLocation:
+    Description: The IP address range that can be used to SSH to the EC2 instances
+    Type: String
+    MinLength: 9
+    MaxLength: 18
+    Default: 0.0.0.0/0
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+
+  BeanstackAppName:
+    Description: Elasticbeanstack Application Name
+    Type: String
+    Default: myapp
+
+  SolutionStackName:
+    Description: Elasticbeanstack Environment Solution Stack Name.
+    Type: String
+    Default: 64bit Amazon Linux 2018.03 v2.8.6 running PHP 5.6
+
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to elasticbeanstack instances
+    Type: String
+    Default: key
+
+  BeanstackInstanceType:
+    Description: Beanstack EC2 instance type
+    Type: String
+    Default: t2.medium
+    AllowedValues: [t1.micro, t2.nano, t2.micro, t2.small, t2.medium, m3.medium]
+    ConstraintDescription: Enter a vaild Beanstack EC2 instance type.
+
+  DBInstanceClass:
+    Description: RDS instance type
+    Type: String
+    Default: db.t2.medium
+    AllowedValues: [db.t2.micro, db.t2.small, db.t2.medium, db.t2.large, db.t2.xlarge, db.t2.2xlarge]
+    ConstraintDescription: Enter a vaild RDS instance type.
+
+  DBName:
+    Description: Default Database name
+    Type: String
+    Default: 'development'
+
+  DBMasterUsername:
+    Description: Database Master Username
+    Type: String
+    Default: 'developer'
+
+  DBMasterUserPassword:
+    Description: Database Master User Password
+    Type: String
+    Default: 'developerpass'
+
+  DBPort:
+    Description: Database Port
+    Type: String
+    Default: '3306'
+
+  RepositoryName:
+    Description: CodeCommit repo name.
+    Type: String
+    AllowedPattern: "[\\x20-\\x7E]*"
+    ConstraintDescription: Can contain only ASCII characters.
+
+  RepositoryBranchDev:
+    Description: The name of the branch for the CodeCommit repo
+    Type: String
+    Default: master
+    AllowedPattern: "[\\x20-\\x7E]*"
+    ConstraintDescription: Can contain only ASCII characters.
+
+  RepositoryBranchStaging:
+    Description: The name of the branch for the CodeCommit repo
+    Type: String
+    Default: master
+    AllowedPattern: "[\\x20-\\x7E]*"
+    ConstraintDescription: Can contain only ASCII characters.
+
+  RepositoryBranchProd:
+    Description: The name of the branch for the CodeCommit repo
+    Type: String
+    Default: master
+    AllowedPattern: "[\\x20-\\x7E]*"
+    ConstraintDescription: Can contain only ASCII characters.
+
+  SNSTopicArn:
+    Description: SNS topic arn for manual approval stage in code pipeline
+    Type: String
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterLabels:
+      VpcCIDR:
+        default: "VPC CIDR"
+      PublicSubnet1CIDR:
+        default: "Public Subnet1 CIDR"
+      PublicSubnet2CIDR:
+        default: "Public Subnet2 CIDR"
+      PrivateSubnet1CIDR:
+        default: "Private Subnet1 CIDR"
+      PrivateSubnet2CIDR:
+        default: "Private Subnet2 CIDR"
+      TemplateBucket:
+        default: "Template Bucket"
+      BastionHostKeyName:
+        default: "Bastion Host Key Name"
+      BastionHostInstanceType:
+        default: "Bastion Host Instance Type"
+      SSHLocation:
+        default: "SSH Location"
+      BeanstackAppName:
+        default: "Elasticbeanstack Application Name"
+      SolutionStackName:
+        default: "Elasticbeanstack Environment Solution Stack Name"
+      KeyName:
+        default: "Name of an existing EC2 KeyPair to enable SSH access to elasticbeanstack instances"
+      BeanstackInstanceType:
+        default: "Beanstack EC2 instance type"
+      DBInstanceClass:
+        default: "RDS instance type"
+      DBName:
+        default: "Default Database name"
+      DBMasterUsername:
+        default: "Database Master Username"
+      DBMasterUserPassword:
+        default: "Database Master User Password"
+      DBPort:
+        default: "Database Port"
+      RepositoryName:
+        default: "Code Commit Repository Name"
+      RepositoryBranchDev:
+        default: "Code Commit Repository Branch for dev deployment"
+      RepositoryBranchStaging:
+        default: "Code Commit Repository Branch for staging deployment"
+      RepositoryBranchProd:
+        default: "Code Commit Repository Branch for prod deployment"
+      SNSTopicArn:
+        default: "SNS topic arn for manual approval stage in code pipeline"
+
+    ParameterGroups:
+      - Label:
+          default: VPC Configuration
+        Parameters:
+          - VpcCIDR
+          - PublicSubnet1CIDR
+          - PublicSubnet2CIDR
+          - PrivateSubnet1CIDR
+          - PrivateSubnet2CIDR
+      - Label:
+          default: Stack Configuration
+        Parameters:
+          - TemplateBucket
+      - Label:
+          default: Bastion Host Configuration
+        Parameters:
+          - BastionHostKeyName
+          - BastionHostInstanceType
+          - SSHLocation
+      - Label:
+          default: Elasticbeanstack Configuration
+        Parameters:
+          - BeanstackAppName
+          - SolutionStackName
+          - KeyName
+          - BeanstackInstanceType
+      - Label:
+          default: RDS Configuration
+        Parameters:
+          - DBInstanceClass
+          - DBName
+          - DBMasterUsername
+          - DBMasterUserPassword
+          - DBPort
+      - Label:
+          default: Code Pipeline Configuration
+        Parameters:
+          - RepositoryName
+          - RepositoryBranchDev
+          - RepositoryBranchStaging
+          - RepositoryBranchProd
+          - SNSTopicArn
+
+Resources:
+  VPC:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.amazonaws.com/${TemplateBucket}/templates/vpc.yaml"
+      Parameters:
+        Name: !Ref AWS::StackName
+        VpcCIDR: !Ref VpcCIDR
+        PublicSubnet1CIDR: !Ref PublicSubnet1CIDR
+        PublicSubnet2CIDR: !Ref PublicSubnet2CIDR
+        PrivateSubnet1CIDR: !Ref PrivateSubnet1CIDR
+        PrivateSubnet2CIDR: !Ref PrivateSubnet2CIDR
+
+  BastionHost:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.amazonaws.com/${TemplateBucket}/templates/bastion-host.yaml"
+      Parameters:
+        Name: !Ref AWS::StackName
+        BastionHostKeyName: !Ref BastionHostKeyName
+        BastionHostInstanceType: !Ref BastionHostInstanceType
+        SSHLocation: !Ref SSHLocation
+        VpcId: !GetAtt VPC.Outputs.VpcId
+        BastionHostSubnet: !GetAtt VPC.Outputs.BastionHostSubnet
+
+  ElasticBeanstackApplication:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.amazonaws.com/${TemplateBucket}/templates/elastic-beanstack-application.yaml"
+      Parameters:
+        Name: !Ref AWS::StackName
+        BeanstackAppName: !Ref BeanstackAppName
+
+  EnvironmentDev:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.amazonaws.com/${TemplateBucket}/templates/environment-dev.yaml"
+      Parameters:
+        Name: !Ref AWS::StackName
+        VpcId: !GetAtt VPC.Outputs.VpcId
+        VpcCIDR: !Ref VpcCIDR
+        PublicSubnets: !GetAtt VPC.Outputs.PublicSubnets
+        PrivateSubnets: !GetAtt VPC.Outputs.PrivateSubnets
+        PublicSubnetsStr: !GetAtt VPC.Outputs.PublicSubnets
+        PrivateSubnetsStr: !GetAtt VPC.Outputs.PrivateSubnets
+        BeanstackApplication: !GetAtt ElasticBeanstackApplication.Outputs.BeanstackApplication
+        SolutionStackName: !Ref SolutionStackName
+        BeanstackInstanceType: !Ref BeanstackInstanceType
+        KeyName: !Ref KeyName
+        DBInstanceClass: !Ref DBInstanceClass
+        DBName: !Ref DBName
+        DBMasterUsername: !Ref DBMasterUsername
+        DBMasterUserPassword: !Ref DBMasterUserPassword
+        DBPort: !Ref DBPort
+        RepositoryName: !Ref RepositoryName
+        RepositoryBranch: !Ref RepositoryBranchDev
+        SNSTopicArn: !Ref SNSTopicArn
+
+  EnvironmentStaging:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.amazonaws.com/${TemplateBucket}/templates/environment-staging.yaml"
+      Parameters:
+        Name: !Ref AWS::StackName
+        VpcId: !GetAtt VPC.Outputs.VpcId
+        VpcCIDR: !Ref VpcCIDR
+        PublicSubnets: !GetAtt VPC.Outputs.PublicSubnets
+        PrivateSubnets: !GetAtt VPC.Outputs.PrivateSubnets
+        PublicSubnetsStr: !GetAtt VPC.Outputs.PublicSubnets
+        PrivateSubnetsStr: !GetAtt VPC.Outputs.PrivateSubnets
+        BeanstackApplication: !GetAtt ElasticBeanstackApplication.Outputs.BeanstackApplication
+        SolutionStackName: !Ref SolutionStackName
+        BeanstackInstanceType: !Ref BeanstackInstanceType
+        KeyName: !Ref KeyName
+        DBInstanceClass: !Ref DBInstanceClass
+        DBName: !Ref DBName
+        DBMasterUsername: !Ref DBMasterUsername
+        DBMasterUserPassword: !Ref DBMasterUserPassword
+        DBPort: !Ref DBPort
+        RepositoryName: !Ref RepositoryName
+        RepositoryBranch: !Ref RepositoryBranchStaging
+        SNSTopicArn: !Ref SNSTopicArn
+
+  EnvironmentProd:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub "https://s3.amazonaws.com/${TemplateBucket}/templates/environment-prod.yaml"
+      Parameters:
+        Name: !Ref AWS::StackName
+        VpcId: !GetAtt VPC.Outputs.VpcId
+        VpcCIDR: !Ref VpcCIDR
+        PublicSubnets: !GetAtt VPC.Outputs.PublicSubnets
+        PrivateSubnets: !GetAtt VPC.Outputs.PrivateSubnets
+        PublicSubnetsStr: !GetAtt VPC.Outputs.PublicSubnets
+        PrivateSubnetsStr: !GetAtt VPC.Outputs.PrivateSubnets
+        BeanstackApplication: !GetAtt ElasticBeanstackApplication.Outputs.BeanstackApplication
+        SolutionStackName: !Ref SolutionStackName
+        BeanstackInstanceType: !Ref BeanstackInstanceType
+        KeyName: !Ref KeyName
+        DBInstanceClass: !Ref DBInstanceClass
+        DBName: !Ref DBName
+        DBMasterUsername: !Ref DBMasterUsername
+        DBMasterUserPassword: !Ref DBMasterUserPassword
+        DBPort: !Ref DBPort
+        RepositoryName: !Ref RepositoryName
+        RepositoryBranch: !Ref RepositoryBranchProd
+        SNSTopicArn: !Ref SNSTopicArn

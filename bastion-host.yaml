@@ -1,0 +1,104 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: This template creates a bastion host in a public subnet to to access elasticbeantack application instances.
+
+Parameters:
+  Name:
+    Type: String
+  BastionHostKeyName:
+    Type: String
+  BastionHostInstanceType:
+    Type: String
+  SSHLocation:
+    Type: String
+  VpcId:
+    Type: String
+  BastionHostSubnet:
+    Type: String
+
+Mappings:
+  RegionMap:
+    'ap-south-1':
+      BASTIONHOSTAMI: 'ami-0aba92643213491b9'
+    'eu-west-3':
+      BASTIONHOSTAMI: 'ami-0050bb60cea70c5b3'
+    'eu-west-2':
+      BASTIONHOSTAMI: 'ami-e6768381'
+    'eu-west-1':
+      BASTIONHOSTAMI: 'ami-0ea87e2bfa81ca08a'
+    'ap-northeast-2':
+      BASTIONHOSTAMI: 'ami-08cfa02141f9e9bee'
+    'ap-northeast-1':
+      BASTIONHOSTAMI: 'ami-0cf78ae724f63bac0'
+    'sa-east-1':
+      BASTIONHOSTAMI: 'ami-09c013530239687aa'
+    'ca-central-1':
+      BASTIONHOSTAMI: 'ami-b61b96d2'
+    'ap-southeast-1':
+      BASTIONHOSTAMI: 'ami-0cf24653bcf894797'
+    'ap-southeast-2':
+      BASTIONHOSTAMI: 'ami-00c1445796bc0a29f'
+    'eu-central-1':
+      BASTIONHOSTAMI: 'ami-06465d49ba60cf770'
+    'us-east-1':
+      BASTIONHOSTAMI: 'ami-0422d936d535c63b1'
+    'us-east-2':
+      BASTIONHOSTAMI: 'ami-0f9c61b5a562a16af'
+    'us-west-1':
+      BASTIONHOSTAMI: 'ami-0d4027d2cdbca669d'
+    'us-west-2':
+      BASTIONHOSTAMI: 'ami-40d1f038'
+
+Resources:
+  BastionHostSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security Group for bastion host
+      VpcId: !Ref VpcId
+      Tags:
+        - Key: Name
+          Value: !Sub ${Name} (BastionHostSG)
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          Description: SSH Service port
+          CidrIp: !Ref 'SSHLocation'
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          CidrIp: 0.0.0.0/0
+          FromPort: 0
+          ToPort: 65535
+          Description: All TCP/UDP port opened for bastion host to access external network
+
+  BastionHost:
+    Type: AWS::EC2::Instance
+    Properties:
+      SubnetId: !Ref BastionHostSubnet
+      InstanceType: !Ref 'BastionHostInstanceType'
+      #SourceDestCheck: 'false'
+      KeyName: !Ref 'BastionHostKeyName'
+      SecurityGroupIds: [ !Ref 'BastionHostSecurityGroup' ]
+      ImageId: !FindInMap [RegionMap, !Ref 'AWS::Region', BASTIONHOSTAMI]
+      Tenancy: 'default'
+      Tags:
+        - Key: Name
+          Value: !Sub ${Name} (BastionHost)
+      BlockDeviceMappings:
+        - DeviceName: '/dev/xvda'
+          Ebs:
+            VolumeType: 'standard'
+            VolumeSize: '8'
+            DeleteOnTermination: 'true'
+
+  BastionHostEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: 'vpc'
+      InstanceId: !Ref BastionHost
+
+Outputs:
+  BastionHostPublicIP:
+    Description: Public IP address of Bastion host
+    Value: !GetAtt [BastionHost, PublicIp]
